@@ -1,0 +1,37 @@
+USE ROLE sysadmin;
+USE WAREHOUSE compute_wh;
+USE SCHEMA cricket.raw;
+
+--> Create a table inside the raw layer
+CREATE OR REPLACE TRANSIENT TABLE cricket.raw.match_raw_tbl(
+         meta OBJECT NOT NULL,
+         info VARIANT NOT NULL,
+         innings ARRAY NOT NULL,
+         stg_file_name TEXT NOT NULL,
+         stg_file_row_number INT NOT NULL,
+         stg_file_hashkey TEXT NOT NULL,
+         stg_modified_ts TIMESTAMP NOT NULL
+         
+)
+COMMENT = 'This is raw table to store all the json data file with root element extracted'
+;
+
+--> We have total 181 json files.
+COPY INTO cricket.raw.match_raw_tbl FROM(
+       SELECT 
+          t.$1:meta::OBJECT AS meta,
+          t.$1:info::VARIANT AS info,
+          t.$1:innings::ARRAY AS innings,
+          metadata$filename,
+          metadata$file_row_number,
+          metadata$file_content_key,
+          metadata$file_last_modified
+       FROM @cricket.land.my_stg/cricket/json (file_format => 'cricket.land.my_json_format') t   
+)
+on_error = continue;
+
+--> Execute the count
+SELECT COUNT(*) FROM cricket.raw.match_raw_tbl;
+
+--> Run the top 10 records
+SELECT * FROM cricket.raw.match_raw_tbl limit 10;
