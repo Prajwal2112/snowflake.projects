@@ -1,0 +1,324 @@
+USE ROLE sysadmin;
+USE WAREHOUSE compute_wh;
+USE SCHEMA cricket.consumption;
+
+--> V1
+SELECT
+    m.match_type_number AS match_id,
+    dd.date_id,
+    0 AS referee_id
+FROM
+    cricket.clean.match_detail_clean m
+    JOIN date_dim dd ON m.event_date = dd.full_dt
+WHERE m.match_type_number = 2729 ;
+
+--> V2
+SELECT 
+    m.match_type_number AS match_id,
+    dd.date_id,
+    0 AS referee_id,
+    ftd.team_id,
+    std.team_id
+FROM
+    cricket.clean.match_detail_clean m
+    JOIN date_dim dd ON m.event_date = dd.full_dt
+    JOIN team_dim ftd ON m.first_team = ftd.team_name
+    JOIN team_dim std ON m.second_team = std.team_name
+WHERE m.match_type_number = 2729;    
+
+--> V3
+SELECT 
+    m.match_type_number AS match_id,
+    dd.date_id,
+    0 AS referee_id,
+    ftd.team_id,
+    std.team_id,
+    mtd.match_type_id
+FROM
+    cricket.clean.match_detail_clean m
+    JOIN date_dim dd ON m.event_date = dd.full_dt
+    JOIN team_dim ftd ON m.first_team = ftd.team_name
+    JOIN team_dim std ON m.second_team = std.team_name
+    JOIN match_type_dim mtd ON m.match_type = mtd.match_type
+WHERE m.match_type_number = 2729;  
+
+-->V4 Venue
+SELECT 
+    m.match_type_number AS match_id,
+    dd.date_id,
+    0 AS referee_id,
+    ftd.team_id,
+    std.team_id,
+    mtd.match_type_id,
+    vd.venue_id
+FROM
+    cricket.clean.match_detail_clean m
+    JOIN date_dim dd ON m.event_date = dd.full_dt
+    JOIN team_dim ftd ON m.first_team = ftd.team_name
+    JOIN team_dim std ON m.second_team = std.team_name
+    JOIN match_type_dim mtd ON m.match_type = mtd.match_type
+    JOIN venue_dim vd ON m.venue = vd.venue_name
+WHERE m.match_type_number = 2729;  
+
+--> V5 Now we need to populate measure
+SELECT 
+    m.match_type_number AS match_id,
+    dd.date_id AS date_id,
+    0 AS referee_id,
+    ftd.team_id AS first_team_id,
+    std.team_id AS second_team_id,
+    mtd.match_type_id AS match_type_id,
+    vd.venue_id AS venue_id,
+    20 AS total_overs,
+    6 AS balls_per_overs,
+
+--> Team A stats
+    MAX(CASE WHEN d.team_name = m.first_team THEN d.over ELSE 0 END) AS overs_played_by_team_a,
+    SUM(CASE WHEN d.team_name = m.first_team THEN 1 ELSE 0 END) AS ball_played_by_team_a,
+    SUM(CASE WHEN d.team_name = m.first_team THEN d.extras ELSE 0 END) AS extra_ball_played_by_team_a,
+    SUM(CASE WHEN d.team_name = m.first_team THEN d.extra_runs ELSE 0 END) AS extra_runs_scored_by_team_a,
+    0 AS fours_by_team_a,
+    0 AS sixes_by_team_a,
+    (SUM(CASE WHEN d.team_name = m.first_team THEN d.runs ELSE 0 END) + 
+     SUM(CASE WHEN d.team_name = m.first_team THEN d.extra_runs ELSE 0 END)) AS total_runs_scored_by_team_a,
+
+--> Team B stats (you had mistakenly used first_team again)
+    MAX(CASE WHEN d.team_name = m.second_team THEN d.over ELSE 0 END) AS overs_played_by_team_b,
+    SUM(CASE WHEN d.team_name = m.second_team THEN 1 ELSE 0 END) AS ball_played_by_team_b,
+    SUM(CASE WHEN d.team_name = m.second_team THEN d.extras ELSE 0 END) AS extra_ball_played_by_team_b,
+    SUM(CASE WHEN d.team_name = m.second_team THEN d.extra_runs ELSE 0 END) AS extra_runs_scored_by_team_b,
+    0 AS fours_by_team_b,
+    0 AS sixes_by_team_b,
+    (SUM(CASE WHEN d.team_name = m.second_team THEN d.runs ELSE 0 END) + 
+     SUM(CASE WHEN d.team_name = m.second_team THEN d.extra_runs ELSE 0 END)) AS total_runs_scored_by_team_b
+
+FROM
+    cricket.clean.match_detail_clean m
+    JOIN date_dim dd ON m.event_date = dd.full_dt
+    JOIN team_dim ftd ON m.first_team = ftd.team_name
+    JOIN team_dim std ON m.second_team = std.team_name
+    JOIN match_type_dim mtd ON m.match_type = mtd.match_type
+    JOIN venue_dim vd ON m.venue = vd.venue_name AND m.city = vd.city
+    JOIN cricket.clean.delivery_clean_tbl d ON d.match_type_number = m.match_type_number
+    
+WHERE 
+    m.match_type_number = 2729
+
+GROUP BY 
+    m.match_type_number,
+    dd.date_id,
+    ftd.team_id,
+    std.team_id,
+    mtd.match_type_id,
+    vd.venue_id;
+
+**************************************************************
+
+-->  Data instertion
+
+INSERT INTO cricket.consumption.match_fact (
+    match_id,
+    date_id,
+    referee_id,
+    team_a_id,
+    team_b_id,
+    match_type_id,
+    venue_id,
+    total_overs,
+    balls_per_over,
+    overs_played_by_team_a,
+    bowls_played_by_team_a,
+    extra_bowls_played_by_team_a,
+    extra_runs_scored_by_team_a,
+    fours_by_team_a,
+    sixes_by_team_a,
+    total_score_by_team_a,
+    wicket_lost_by_team_a,
+    toss_winner_team_id,
+    toss_decision,
+    match_result,
+    winner_team_id
+)
+SELECT
+    m.match_type_number,
+    dd.date_id,
+    0,
+    ftd.team_id,
+    std.team_id,
+    mtd.match_type_id,
+    vd.venue_id,
+    20,
+    6,
+    MAX(CASE WHEN d.team_name = m.first_team THEN d.over ELSE 0 END),
+    SUM(CASE WHEN d.team_name = m.first_team THEN 1 ELSE 0 END),
+    SUM(CASE WHEN d.team_name = m.first_team THEN d.extras ELSE 0 END),
+    SUM(CASE WHEN d.team_name = m.first_team THEN d.extra_runs ELSE 0 END),
+    0,
+    0,
+    (SUM(CASE WHEN d.team_name = m.first_team THEN d.runs ELSE 0 END) +
+     SUM(CASE WHEN d.team_name = m.first_team THEN d.extra_runs ELSE 0 END)),
+    SUM(CASE WHEN d.team_name = m.first_team AND player_out IS NOT NULL THEN 1 ELSE 0 END),
+    tw.team_id AS toss_winner_team_id,
+    m.toss_decision AS toss_decision,
+    m.match_result AS match_result,
+    mw.team_id AS winner_team_id
+FROM
+    cricket.clean.match_detail_clean m
+    JOIN date_dim dd ON m.event_date = dd.full_dt
+    JOIN team_dim ftd ON m.first_team = ftd.team_name
+    JOIN team_dim std ON m.second_team = std.team_name
+    JOIN match_type_dim mtd ON m.match_type = mtd.match_type
+    JOIN venue_dim vd ON m.venue = vd.venue_name AND m.city = vd.city
+    JOIN cricket.clean.delivery_clean_tbl d ON d.match_type_number = m.match_type_number
+    JOIN team_dim tw ON m.toss_winner = tw.team_name
+    JOIN team_dim mw ON m.winner = mw.team_name
+
+GROUP BY 
+    m.match_type_number,
+    dd.date_id,
+    ftd.team_id,
+    std.team_id,
+    mtd.match_type_id,
+    vd.venue_id,
+    tw.team_id,
+    m.toss_decision,
+    m.match_result,
+    mw.team_id;
+
+SELECT * FROM cricket.consumption.match_fact;
+
+SELECT * FROM cricket.consumption.match_fact 
+WHERE match_id = 2729;
+
+
+USE ROLE sysadmin;
+USE WAREHOUSE compute_wh;
+USE SCHEMA cricket.consumption;
+
+--> Lets populate delivery fact table
+SELECT * FROM cricket.clean.delivery_clean_tbl
+WHERE match_type_number = 2729;
+
+-- V1
+--> Get the team_id
+SELECT 
+   d.match_type_number AS match_id,
+   td.team_id, td.team_name
+FROM
+   cricket.clean.delivery_clean_tbl d
+   JOIN team_dim td ON d.team_name = td.team_name
+WHERE d.match_type_number = 2729;
+
+--> V2 Get the player id
+SELECT
+    d.match_type_number AS match_id,
+    td.team_name,
+    bpd.player_dim AS bowler_id, bpd.player_name,
+    spd.player_dim AS batter_id, spd.player_name
+FROM cricket.clean.delivery_clean_tbl d
+    JOIN team_dim td ON d.team_name = td.team_name
+    JOIN player_dim bpd ON d.bowler = bpd.player_name
+    JOIN player_dim spd ON d.batter = spd.player_name
+WHERE d.match_type_number = 2729;
+
+--> V3 add measurements
+SELECT
+    d.match_type_number AS match_id,
+    td.team_name,
+    bpd.player_dim AS bowler_id, bpd.player_name,
+    spd.player_dim AS batter_id, spd.player_name,
+    d.over,
+    d.runs,
+    d.extra_runs,
+    d.extra_type,
+FROM cricket.clean.delivery_clean_tbl d
+    JOIN team_dim td ON d.team_name = td.team_name
+    JOIN player_dim bpd ON d.bowler = bpd.player_name
+    JOIN player_dim spd ON d.batter = spd.player_name
+WHERE d.match_type_number = 2729;
+
+--> V4 Remove unwanted columns
+SELECT
+    d.match_type_number AS match_id,
+    td.team_id, td.team_name,
+    bpd.player_dim AS bowler_id, bpd.player_name,
+    spd.player_dim AS batter_id, spd.player_name,
+    d.over,
+    d.runs,
+    CASE WHEN d.extra_runs IS NULL THEN 0 ELSE d.extra_runs END AS extra_runs,
+    CASE WHEN d.extra_type IS NULL THEN 'NONE' ELSE d.extra_type END AS extra_type,
+    CASE WHEN d.player_out IS NULL THEN 'NONE' ELSE d.player_out END AS player_out,
+    CASE WHEN d.player_out_kind IS NULL THEN 'NONE' ELSE d.player_out_kind END AS  player_out_kind
+    FROM cricket.clean.delivery_clean_tbl d
+    JOIN team_dim td ON d.team_name = td.team_name
+    JOIN player_dim bpd ON d.bowler = bpd.player_name
+    JOIN player_dim spd ON d.batter = spd.player_name
+WHERE d.match_type_number = 2729;
+
+SELECT * FROM player_dim;
+
+CREATE OR REPLACE TABLE delivery_fact (
+     match_id INT ,
+     bowler_id INT,
+     batter_id INT,
+     over INT,
+     runs INT,
+     extra_runs INT,
+     extra_type VARCHAR (255),
+     player_out VARCHAR(255),
+     player_out_kind VARCHAR(255),
+
+     CONSTRAINT fk_del_match_id FOREIGN KEY (match_id) REFERENCES match_fact (match_id),
+     CONSTRAINT fk_bowler FOREIGN KEY (bowler_id) REFERENCES player_dim (player_dim),
+     CONSTRAINT fk_batter FOREIGN KEY (batter_id) REFERENCES player_dim (player_dim)
+);
+
+
+--> Insert record
+INSERT INTO delivery_fact
+SELECT
+    d.match_type_number AS match_id,
+    bpd.player_dim AS bowler_id,
+    spd.player_dim AS batter_id,
+    d.over,
+    d.runs,
+
+    CASE WHEN d.extra_runs IS NULL THEN 0 ELSE d.extra_runs END AS extra_runs,
+    CASE WHEN d.extra_type IS NULL THEN 'NONE' ELSE d.extra_type END AS extra_type,
+    CASE WHEN d.player_out IS NULL THEN 'NONE' ELSE d.player_out END AS player_out,
+    CASE WHEN d.player_out_kind IS NULL THEN 'NONE' ELSE d.player_out_kind END AS  player_out_kind
+FROM cricket.clean.delivery_clean_tbl d
+    JOIN player_dim bpd ON d.bowler = bpd.player_name
+    JOIN player_dim spd ON d.batter = spd.player_name
+;
+
+SELECT * FROM delivery_fact;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
