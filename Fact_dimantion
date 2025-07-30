@@ -1,0 +1,243 @@
+USE ROLE sysadmin;
+USE WAREHOUSE compute_wh;
+USE SCHEMA cricket.consumption;
+
+CREATE OR REPLACE TABLE date_dim(
+    date_id INT PRIMARY KEY AUTOINCREMENT,
+    full_dt DATE,
+    DAY INT,
+    MONTH INT,
+    YEAR INT,
+    QUARTER INT,
+    DAYOFWEEK INT,
+    DAYOFMONTH INT,
+    DAYOFYEAR INT,
+    dayoweekname VARCHAR (3),-- to store day names (e.g.,"Mon")
+    isweekend BOOLEAN -- To indicate if it's a weekend (True/False sat/sun both falls under weekend)
+);
+
+--> Match_referees, reseve_umpires,tv_umpires,field_umpiers
+CREATE OR REPLACE TABLE referee_dim(
+    referee_id INT PRIMARY KEY AUTOINCREMENT,
+    referee_name TEXT NOT NULL,
+    referee_type TEXT NOT NULL
+);
+
+--> India, Australia etc..,
+CREATE OR REPLACE TABLE team_dim(
+   team_id INT PRIMARY KEY AUTOINCREMENT,
+   team_name TEXT NOT NULL
+);
+
+--> Player table
+CREATE OR REPLACE TABLE player_dim(
+    player_dim INT PRIMARY KEY AUTOINCREMENT,
+    team_id INT NOT NULL,
+    player_name TEXT NOT NULL
+);
+
+ALTER TABLE cricket.consumption.player_dim
+ADD CONSTRAINT fk_team_player_id
+FOREIGN KEY (team_id)
+REFERENCES cricket.consumption.team_dim (team_id);
+
+CREATE OR REPLACE TABLE venue_dim(
+    venue_id INT PRIMARY KEY AUTOINCREMENT,
+    venue_name TEXT NOT NULL,
+    city TEXT NOT NULL,
+    state TEXT,
+    country TEXT,
+    end_names TEXT,
+    capacity NUMBER,
+    pitch TEXT,
+    flood_light BOOLEAN,
+    establised_area TEXT,
+    other_sports TEXT,
+    curator TEXT,
+    lattitude NUMBER(10,6),
+    logitude NUMBER(10,6)
+);
+
+CREATE OR REPLACE TABLE match_type_dim(
+    match_type_id INT PRIMARY KEY AUTOINCREMENT,
+    match_type TEXT NOT NULL
+);
+
+--> Create Match fact table
+CREATE OR REPLACE TABLE match_fact(
+    match_id INT PRIMARY KEY AUTOINCREMENT,
+    date_id INT NOT NULL,
+    referee_id INT NOT NULL,
+    team_a_id INT NOT NULL,
+    team_b_id INT NOT NULL,
+    match_type_id INT NOT NULL,
+    venue_id INT NOT NULL,
+    city TEXT,
+    total_overs NUMBER(3),
+    balls_per_over NUMBER(1),
+
+    overs_played_by_team_a NUMBER(2),
+    bowls_played_by_team_a NUMBER(3),
+    extra_bowls_played_by_team_a NUMBER(3),
+    extra_runs_scored_by_team_a NUMBER(3),
+    fours_by_team_a NUMBER(3),
+    sixes_by_team_a NUMBER(3),
+    total_score_by_team_a NUMBER(3),
+    wicket_lost_by_team_a NUMBER(2),
+    
+    toss_winner_team_id INT NOT NULL,
+    toss_decision TEXT NOT NULL,
+    match_result TEXT NOT NULL,
+    winner_team_id INT NOT NULL,
+
+    CONSTRAINT fk_date FOREIGN KEY (date_id) REFERENCES date_dim(date_id),
+    CONSTRAINT fk_referee FOREIGN KEY (referee_id) REFERENCES referee_dim (referee_id),
+    CONSTRAINT fk_team1 FOREIGN KEY (team_a_id) REFERENCES team_dim (team_id),
+    CONSTRAINT fk_team2 FOREIGN key (team_b_id) REFERENCES team_dim (team_id),
+    CONSTRAINT fk_match_type FOREIGN KEY (match_type_id) REFERENCES match_type_dim (match_type_id),
+    CONSTRAINT fk_venue FOREIGN KEY (venue_id) REFERENCES venue_dim (venue_id),
+    CONSTRAINT fk_toss_winner_team FOREIGN KEY (toss_winner_team_id) REFERENCES team_dim (team_id),
+    CONSTRAINT fk_winner_team FOREIGN KEY (winner_team_id) REFERENCES team_dim (team_id)
+);
+
+--> lets populate date 
+--> We will extract the dimension table data using our detail table from clean layer.
+--> and it will be based on description field as we don't have any master data set.
+--> in real world, you may also get master data set as separate entities.
+
+--> lets start with team dim, and for simplicity, it is just team name.
+--> v1
+SELECT DISTINCT team_name FROM(
+SELECT first_team AS team_name FROM cricket.clean.match_detail_clean
+UNION ALL 
+SELECT second_team AS team_name FROM cricket.clean.match_detail_clean
+);
+
+--> v2
+INSERT INTO cricket.consumption.team_dim (team_name)
+SELECT DISTINCT team_name FROM(
+SELECT first_team AS team_name FROM cricket.clean.match_detail_clean
+UNION ALL 
+SELECT second_team AS team_name FROM cricket.clean.match_detail_clean
+) ORDER BY team_name ;
+
+--> V3
+SELECT * FROM cricket.consumption.team_dim ORDER BY  team_name;
+
+--*****************************************
+--> Team player
+
+--> V1
+SELECT * FROM cricket.clean.player_clean_tbl LIMIT 10;
+
+--> v2 
+SELECT country,player_name FROM cricket.clean.player_clean_tbl GROUP BY country,player_name;
+
+--> v3
+SELECT a.country, b.team_id, a.player_name
+FROM 
+    cricket.clean.player_clean_tbl a JOIN cricket.consumption.team_dim b 
+    ON a.country = b.team_name
+    GROUP BY 
+    a.country,
+    b.team_id,
+    a.player_name;
+
+-->  V4 Insert the data
+INSERT INTO cricket.consumption.player_dim (team_id, player_name)
+SELECT b.team_id, a.player_name
+FROM
+   cricket.clean.player_clean_tbl a
+   JOIN cricket.consumption.team_dim b ON a.country = b.team_name
+   GROUP BY 
+   b.team_id,
+   a.player_name;
+
+--> V5 Check the data   
+SELECT * FROM cricket.consumption.player_dim;
+
+--> ******************************************************************
+--> Referee Dimension
+--> since we have not populate the referee detail in our previous layer.
+--> We will skip it for now. We need to understand the it well.
+--> Before we can design the refree
+
+--> V1
+SELECT * FROM cricket.clean.match_detail_clean LIMIT  10;
+
+--> V2
+SELECT INFO FROM cricket.raw.match_raw_tbl LIMIT 1;
+
+--> V3
+SELECT 
+   info:officials.match_referees[0]::TEXT AS match_referee,
+   info:officials.reserve_unpires[0]::TEXT AS reserve_umpire,
+   info:officials.tv_umpires[0]::TEXT AS tv_umpire,
+   info:officials.umpires[0]::TEXT AS first_umpire,
+   info:officials.umpires[1]::TEXT AS second_umpire
+FROM cricket.raw.match_raw_tbl LIMIT 1;
+
+-- **********************************************************************
+--> Venue Dimention
+--> V1
+SELECT * FROM cricket.clean.match_detail_clean LIMIT 10;
+
+--> v2
+SELECT venue, city FROM cricket.clean.match_detail_clean LIMIT 10;
+
+--> v3
+SELECT venue, city FROM cricket.clean.match_detail_clean
+GROUP BY venue, city;
+
+--> V4
+INSERT INTO cricket.consumption.venue_dim (venue_name, city)
+SELECT venue, city FROM(
+     SELECT venue,
+     CASE WHEN city IS NULL THEN 'NA'
+     ELSE  city
+     END AS city
+     FROM cricket.clean.match_detail_clean
+     )
+GROUP BY venue, city;     
+
+--> V5
+SELECT * FROM cricket.consumption.venue_dim WHERE city = 'Mumbai';
+
+SELECT city FROM cricket.consumption.venue_dim 
+GROUP BY city 
+HAVING COUNT (1) > 1;
+
+-- *******************************************************************
+---> Match Type Dimention
+--> V1
+SELECT * FROM cricket.clean.match_detail_clean LIMIT 10;
+
+--> V2
+SELECT match_type FROM cricket.clean.match_detail_clean
+GROUP BY match_type;
+
+--> V3
+INSERT INTO cricket.consumption.match_type_dim (match_type)
+SELECT match_type FROM cricket.clean.match_detail_clean
+GROUP BY match_type;
+
+--> ******************************************************************
+--> Date Dimention
+SELECT MIN(event_date), MAX(event_date) FROM cricket.clean.match_detail_clean;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
